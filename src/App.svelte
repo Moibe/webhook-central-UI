@@ -1,38 +1,38 @@
 <script>
-  const projects = [
-    {
-      name: 'mide-chatbot',
-      stack: 'Python',
-      url: 'http://172.10.30.15:8090/hooks/despliegue-mide-chatbot',
-    },
-    {
-      name: 'document_ai',
-      stack: 'Python',
-      url: 'http://172.10.30.15:8090/hooks/despliegue-document-ai',
-    },
-    {
-      name: 'notificaciones_twilio',
-      stack: 'Python',
-      url: 'http://172.10.30.15:8090/hooks/despliegue-notificaciones-twilio',
-    },
-    {
-      name: 'svelte_mide',
-      stack: 'Svelte',
-      url: 'http://172.10.30.15:8090/hooks/despliegue-svelte-mide',
-    },
-  ];
+  const WEBHOOK_BASE = 'http://172.10.30.15:8090';
+  const APPS_URL = 'http://172.10.30.15:4174/apps.json';
 
+  let projects = $state([]);
+  let loading = $state(true);
+  let error = $state(null);
   let hookStates = $state({});
+
+  async function loadProjects() {
+    try {
+      const res = await fetch(APPS_URL);
+      projects = await res.json();
+    } catch (e) {
+      error = 'No se pudo cargar la lista de proyectos';
+    } finally {
+      loading = false;
+    }
+  }
+
+  loadProjects();
+
+  function webhookUrl(project) {
+    return WEBHOOK_BASE + project.deploy_url;
+  }
 
   async function triggerWebhook(event, project) {
     event.preventDefault();
-    if (hookStates[project.name] === 'loading') return;
-    hookStates[project.name] = 'loading';
+    if (hookStates[project.id] === 'loading') return;
+    hookStates[project.id] = 'loading';
     try {
-      await fetch(project.url, { mode: 'no-cors' });
-      hookStates[project.name] = 'success';
+      await fetch(webhookUrl(project), { mode: 'no-cors' });
+      hookStates[project.id] = 'success';
     } catch (_) {
-      hookStates[project.name] = 'error';
+      hookStates[project.id] = 'error';
     }
   }
 </script>
@@ -45,50 +45,58 @@
     </header>
 
     <div class="card">
-      <table>
-        <thead>
-          <tr>
-            <th>Proyecto</th>
-            <th>Stack</th>
-            <th>URL Webhook</th>
-            <th>Estado</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each projects as project}
+      {#if loading}
+        <p class="loading-msg"><span class="spinner"></span> Cargando proyectos...</p>
+      {:else if error}
+        <p class="error-msg">{error}</p>
+      {:else}
+        <table>
+          <thead>
             <tr>
-              <td class="project-name">{project.name}</td>
-              <td>
-                <span class="badge {project.stack.startsWith('Svelte') ? 'badge-svelte' : 'badge-python'}">
-                  {project.stack}
-                </span>
-              </td>
-              <td>
-                <a
-                  href={project.url}
-                  class="webhook-link"
-                  onclick={(e) => triggerWebhook(e, project)}
-                >
-                  {project.url}
-                </a>
-              </td>
-              <td class="status-cell">
-                {#if hookStates[project.name] === 'loading'}
-                  <span class="status loading">
-                    <span class="spinner"></span> Desplegando...
-                  </span>
-                {:else if hookStates[project.name] === 'success'}
-                  <span class="status success">✓ Desplegado</span>
-                {:else if hookStates[project.name] === 'error'}
-                  <span class="status error">✗ Error</span>
-                {:else}
-                  <span class="status idle">— Listo</span>
-                {/if}
-              </td>
+              <th>Proyecto</th>
+              <th>Stack</th>
+              <th>Branch</th>
+              <th>URL Webhook</th>
+              <th>Estado</th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {#each projects as project}
+              <tr>
+                <td class="project-name">{project.name}</td>
+                <td>
+                  <span class="badge {project.stack === 'svelte' ? 'badge-svelte' : 'badge-python'}">
+                    {project.stack}
+                  </span>
+                </td>
+                <td class="branch">{project.branch}</td>
+                <td>
+                  <a
+                    href={webhookUrl(project)}
+                    class="webhook-link"
+                    onclick={(e) => triggerWebhook(e, project)}
+                  >
+                    {webhookUrl(project)}
+                  </a>
+                </td>
+                <td class="status-cell">
+                  {#if hookStates[project.id] === 'loading'}
+                    <span class="status loading">
+                      <span class="spinner"></span> Desplegando...
+                    </span>
+                  {:else if hookStates[project.id] === 'success'}
+                    <span class="status success">✓ Desplegado</span>
+                  {:else if hookStates[project.id] === 'error'}
+                    <span class="status error">✗ Error</span>
+                  {:else}
+                    <span class="status idle">— Listo</span>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
     </div>
 
     <footer>
@@ -146,6 +154,28 @@
     margin-left: 12px;
     flex-basis: 100%;
     font-size: 1rem;
+  }
+
+  .loading-msg, .error-msg {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 24px 20px;
+    font-size: 0.9rem;
+  }
+
+  .loading-msg {
+    color: #2563eb;
+  }
+
+  .error-msg {
+    color: #b91c1c;
+  }
+
+  .branch {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.82rem;
+    color: #6b7280;
   }
 
   .card {
