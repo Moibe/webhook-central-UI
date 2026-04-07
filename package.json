@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && ln -sf /home/mbriseno/code/webhook-central/apps.json dist/apps.json",
     "preview": "vite preview"
   },
   "devDependencies": {
