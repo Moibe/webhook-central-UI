@@ -1,11 +1,13 @@
 <script>
   const WEBHOOK_BASE = 'http://172.10.30.15:8090';
   const APPS_URL = 'http://172.10.30.15:4174/apps.json';
+  const TWO_MINUTES = 2 * 60 * 1000; // 120000ms
 
   let projects = $state([]);
   let loading = $state(true);
   let error = $state(null);
   let hookStates = $state({});
+  let lastDeployTime = $state({}); // timestamp del último deploy exitoso
 
   async function loadProjects() {
     try {
@@ -26,11 +28,28 @@
 
   async function triggerWebhook(event, project) {
     event.preventDefault();
+    
+    // Si está cargando, no hacer nada
     if (hookStates[project.id] === 'loading') return;
+    
+    // Si está en "success", verificar si han pasado 2 minutos
+    if (hookStates[project.id] === 'success') {
+      const timePassed = Date.now() - (lastDeployTime[project.id] || 0);
+      if (timePassed >= TWO_MINUTES) {
+        // Han pasado más de 2 minutos, resetear a "idle"
+        hookStates[project.id] = 'idle';
+        return;
+      }
+      // Si hace menos de 2 minutos, permitir re-deploy (continuar más abajo)
+    }
+    
     hookStates[project.id] = 'loading';
     try {
-      await fetch(webhookUrl(project), { mode: 'no-cors' });
+      const minDelay = new Promise(r => setTimeout(r, 3000));
+      const request = fetch(webhookUrl(project), { mode: 'no-cors' });
+      await Promise.all([minDelay, request]);
       hookStates[project.id] = 'success';
+      lastDeployTime[project.id] = Date.now();
     } catch (_) {
       hookStates[project.id] = 'error';
     }
