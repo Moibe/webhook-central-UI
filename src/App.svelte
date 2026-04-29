@@ -26,6 +26,11 @@
     return WEBHOOK_BASE + project.deploy_url;
   }
 
+  function appHref(project) {
+    if (!project.app_url) return null;
+    return project.stack === 'python' ? project.app_url + '/docs' : project.app_url;
+  }
+
   async function triggerWebhook(event, project) {
     event.preventDefault();
     
@@ -75,6 +80,7 @@
               <th>Proyecto</th>
               <th>Stack</th>
               <th>Branch</th>
+              <th>App</th>
               <th>URL Webhook</th>
               <th>Estado</th>
             </tr>
@@ -89,6 +95,20 @@
                   </span>
                 </td>
                 <td class="branch">{project.branch}</td>
+                <td class="app-cell">
+                  {#if project.app_url}
+                    <a
+                      href={appHref(project)}
+                      class="app-link"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {project.stack === 'python' ? 'API ↗' : 'Webapp ↗'}
+                    </a>
+                  {:else}
+                    <span class="muted">—</span>
+                  {/if}
+                </td>
                 <td>
                   <a
                     href={webhookUrl(project)}
@@ -274,6 +294,36 @@
     background: #ffedd5;
     color: #1e40af;
     border: 1px solid #fed7aa;
+  }
+
+  .app-cell {
+    white-space: nowrap;
+  }
+
+  .app-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: #0d9488;
+    text-decoration: none;
+    padding: 4px 12px;
+    border: 1px solid #5eead4;
+    border-radius: 20px;
+    background: #f0fdfa;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .app-link:hover {
+    background: #ccfbf1;
+    color: #0f766e;
+    border-color: #2dd4bf;
+  }
+
+  .muted {
+    color: #cbd5e1;
+    font-size: 0.9rem;
   }
 
   .webhook-link {
