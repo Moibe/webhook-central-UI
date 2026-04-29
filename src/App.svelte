@@ -109,7 +109,17 @@
                     <span class="muted">—</span>
                   {/if}
                 </td>
-                <td>
+                <td class="webhook-cell">
+                  <button
+                    type="button"
+                    class="deploy-btn"
+                    onclick={(e) => triggerWebhook(e, project)}
+                    disabled={hookStates[project.id] === 'loading'}
+                    aria-label="Desplegar {project.name}"
+                    title="Desplegar {project.name}"
+                  >
+                    🚀
+                  </button>
                   <a
                     href={webhookUrl(project)}
                     class="webhook-link"
@@ -324,6 +334,44 @@
   .muted {
     color: #cbd5e1;
     font-size: 0.9rem;
+  }
+
+  .webhook-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .deploy-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid #93c5fd;
+    background: #eff6ff;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  }
+
+  .deploy-btn:hover:not(:disabled) {
+    background: #dbeafe;
+    border-color: #2563eb;
+    transform: scale(1.05);
+  }
+
+  .deploy-btn:active:not(:disabled) {
+    transform: scale(0.95);
+  }
+
+  .deploy-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .webhook-link {
