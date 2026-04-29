@@ -31,6 +31,16 @@
     return project.stack === 'python' ? project.app_url + '/docs' : project.app_url;
   }
 
+  function appPort(project) {
+    if (!project.app_url) return null;
+    try {
+      const port = new URL(project.app_url).port;
+      return port || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   async function triggerWebhook(event, project) {
     event.preventDefault();
     
@@ -81,6 +91,7 @@
               <th>Stack</th>
               <th>Branch</th>
               <th>App</th>
+              <th>Puerto</th>
               <th>URL Webhook</th>
               <th>Estado</th>
             </tr>
@@ -105,6 +116,13 @@
                     >
                       {project.stack === 'python' ? 'API ↗' : 'Webapp ↗'}
                     </a>
+                  {:else}
+                    <span class="muted">—</span>
+                  {/if}
+                </td>
+                <td class="port-cell">
+                  {#if appPort(project)}
+                    <span class="port">{appPort(project)}</span>
                   {:else}
                     <span class="muted">—</span>
                   {/if}
@@ -334,6 +352,20 @@
   .muted {
     color: #cbd5e1;
     font-size: 0.9rem;
+  }
+
+  .port-cell {
+    white-space: nowrap;
+  }
+
+  .port {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.82rem;
+    color: #475569;
+    background: #f1f5f9;
+    padding: 3px 10px;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
   }
 
   .webhook-cell {
