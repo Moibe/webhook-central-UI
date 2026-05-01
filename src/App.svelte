@@ -31,6 +31,11 @@
     return project.stack === 'python' ? project.app_url + '/docs' : project.app_url;
   }
 
+  function publicHref(project) {
+    if (!project.public_url) return null;
+    return project.stack === 'python' ? project.public_url + '/docs' : project.public_url;
+  }
+
   function appPort(project) {
     if (!project.app_url) return null;
     try {
@@ -90,7 +95,8 @@
               <th>Proyecto</th>
               <th>Stack</th>
               <th>Branch</th>
-              <th>App</th>
+              <th></th>
+              <th>Tipo de App</th>
               <th>Puerto</th>
               <th>URL Webhook</th>
               <th>Estado</th>
@@ -107,6 +113,28 @@
                 </td>
                 <td class="branch">{project.branch}</td>
                 <td class="app-cell">
+                  {#if project.public_url}
+                    <a
+                      href={publicHref(project)}
+                      class="public-link"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Dominio público: {publicHref(project)}"
+                      aria-label="Abrir dominio público de {project.name}"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="8" y1="13" x2="16" y2="13"/>
+                        <line x1="8" y1="17" x2="16" y2="17"/>
+                        <line x1="8" y1="9" x2="10" y2="9"/>
+                      </svg>
+                    </a>
+                  {:else}
+                    <span class="muted">—</span>
+                  {/if}
+                </td>
+                <td class="app-chip-cell">
                   {#if project.app_url}
                     <a
                       href={appHref(project)}
@@ -326,6 +354,38 @@
 
   .app-cell {
     white-space: nowrap;
+    text-align: center;
+    width: 1%;
+  }
+
+  .app-chip-cell {
+    white-space: nowrap;
+  }
+
+  .public-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    color: #7c3aed;
+    border: 1px solid #ddd6fe;
+    background: #f5f3ff;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
+  }
+
+  .public-link svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .public-link:hover {
+    background: #ede9fe;
+    color: #6d28d9;
+    border-color: #c4b5fd;
+    transform: scale(1.05);
   }
 
   .app-link {
