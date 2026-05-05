@@ -1,13 +1,24 @@
 <script>
   const WEBHOOK_BASE = 'http://172.10.30.15:8090';
   const APPS_URL = 'http://172.10.30.15:4174/apps.json';
+  const DEPLOYS_URL = 'http://172.10.30.15:4174/logs/deploys.jsonl';
+  const LOGS_BASE = 'http://172.10.30.15:4174/logs';
+  const POLL_INTERVAL_MS = 4000;
   const TWO_MINUTES = 2 * 60 * 1000; // 120000ms
 
   let projects = $state([]);
   let loading = $state(true);
   let error = $state(null);
-  let hookStates = $state({});
-  let lastDeployTime = $state({}); // timestamp del último deploy exitoso
+  let hookStates = $state({}); // estado local transitorio entre el click y la próxima lectura del backend
+  let lastDeployTime = $state({}); // timestamp del último deploy exitoso (UX original)
+  let clickTimes = $state({}); // timestamp del último click, para distinguir un deploy nuevo vs uno histórico
+
+  let backendDeploys = $state({}); // app -> último registro leído de deploys.jsonl
+  let pollOk = $state(false); // false hasta el primer poll exitoso
+
+  let detailDeploy = $state(null);
+  let detailLogContent = $state('');
+  let detailLogLoading = $state(false);
 
   async function loadProjects() {
     try {
@@ -20,7 +31,37 @@
     }
   }
 
+  async function refreshDeploys() {
+    try {
+      const res = await fetch(DEPLOYS_URL, { cache: 'no-store' });
+      if (!res.ok) return; // 404 mientras no haya logs/deploys.jsonl todavía
+      const text = await res.text();
+      const next = {};
+      for (const line of text.split('\n')) {
+        const t = line.trim();
+        if (!t) continue;
+        try {
+          const rec = JSON.parse(t);
+          // El último evento por app gana (jsonl es append-only en orden cronológico)
+          next[rec.app] = rec;
+        } catch (_) {
+          // línea malformada, ignorar
+        }
+      }
+      backendDeploys = next;
+      pollOk = true;
+    } catch (_) {
+      // red caída, etc. — silencioso
+    }
+  }
+
   loadProjects();
+
+  $effect(() => {
+    refreshDeploys();
+    const id = setInterval(refreshDeploys, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  });
 
   function webhookUrl(project) {
     return WEBHOOK_BASE + project.deploy_url;
@@ -46,32 +87,98 @@
     }
   }
 
+  function effectiveStatus(projectId) {
+    const local = hookStates[projectId];
+    const rec = backendDeploys[projectId];
+    const click = clickTimes[projectId] || 0;
+
+    // Mientras el click no se vea reflejado todavía en el backend, mostrar 'loading' local
+    if (local === 'loading') {
+      if (!rec || new Date(rec.started_at).getTime() < click - 1000) {
+        return { kind: 'loading', rec: null };
+      }
+    }
+
+    if (!rec) {
+      if (local === 'error') return { kind: 'error', rec: null };
+      return { kind: 'idle', rec: null };
+    }
+
+    if (rec.event === 'started') return { kind: 'running', rec };
+    if (rec.event === 'finished') {
+      return { kind: rec.status, rec }; // 'success' | 'failed'
+    }
+    return { kind: 'idle', rec };
+  }
+
+  function fmtDuration(s) {
+    if (s == null) return '';
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const ss = s % 60;
+    return `${m}m ${ss}s`;
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
+    }
+  }
+
   async function triggerWebhook(event, project) {
     event.preventDefault();
-    
-    // Si está cargando, no hacer nada
-    if (hookStates[project.id] === 'loading') return;
-    
-    // Si está en "success", verificar si han pasado 2 minutos
-    if (hookStates[project.id] === 'success') {
+
+    const cur = effectiveStatus(project.id).kind;
+    if (cur === 'loading' || cur === 'running') return;
+
+    // Cooldown de 2min sobre el último deploy local exitoso (UX original)
+    if (cur === 'success') {
       const timePassed = Date.now() - (lastDeployTime[project.id] || 0);
-      if (timePassed >= TWO_MINUTES) {
-        // Han pasado más de 2 minutos, resetear a "idle"
-        hookStates[project.id] = 'idle';
-        return;
+      if (timePassed < TWO_MINUTES) {
+        // permitido igualmente (el backend muestra el estado real)
       }
-      // Si hace menos de 2 minutos, permitir re-deploy (continuar más abajo)
     }
-    
+
+    clickTimes[project.id] = Date.now();
     hookStates[project.id] = 'loading';
     try {
-      const minDelay = new Promise(r => setTimeout(r, 3000));
-      const request = fetch(webhookUrl(project), { mode: 'no-cors' });
-      await Promise.all([minDelay, request]);
-      hookStates[project.id] = 'success';
+      await fetch(webhookUrl(project), { mode: 'no-cors' });
       lastDeployTime[project.id] = Date.now();
     } catch (_) {
       hookStates[project.id] = 'error';
+    }
+    // El estado final lo marca el polling de deploys.jsonl
+  }
+
+  function openDetail(rec) {
+    detailDeploy = rec;
+    detailLogContent = '';
+    detailLogLoading = false;
+  }
+
+  function closeDetail() {
+    detailDeploy = null;
+    detailLogContent = '';
+    detailLogLoading = false;
+  }
+
+  async function loadFullLog() {
+    if (!detailDeploy || !detailDeploy.log_file) return;
+    detailLogLoading = true;
+    try {
+      const res = await fetch(`${LOGS_BASE}/${detailDeploy.log_file}`, { cache: 'no-store' });
+      if (!res.ok) {
+        detailLogContent = `(no se pudo cargar el log: HTTP ${res.status})`;
+      } else {
+        detailLogContent = await res.text();
+      }
+    } catch (e) {
+      detailLogContent = '(error de red al cargar el log)';
+    } finally {
+      detailLogLoading = false;
     }
   }
 </script>
@@ -80,7 +187,7 @@
   <div class="container">
     <header>
       <h1>Buzzword IA DevOps</h1>
-      <p>Panel de despliegue de servicios</p>
+      <p>Panel de despliegue de servicios{pollOk ? '' : ' · sin telemetría aún'}</p>
     </header>
 
     <div class="card">
@@ -104,6 +211,7 @@
           </thead>
           <tbody>
             {#each projects as project}
+              {@const st = effectiveStatus(project.id)}
               <tr>
                 <td class="project-name">{project.name}</td>
                 <td>
@@ -160,7 +268,7 @@
                     type="button"
                     class="deploy-btn"
                     onclick={(e) => triggerWebhook(e, project)}
-                    disabled={hookStates[project.id] === 'loading'}
+                    disabled={st.kind === 'loading' || st.kind === 'running'}
                     aria-label="Desplegar {project.name}"
                     title="Desplegar {project.name}"
                   >
@@ -175,14 +283,29 @@
                   </a>
                 </td>
                 <td class="status-cell">
-                  {#if hookStates[project.id] === 'loading'}
+                  {#if st.kind === 'loading'}
                     <span class="status loading">
+                      <span class="spinner"></span> Disparado...
+                    </span>
+                  {:else if st.kind === 'running'}
+                    <span class="status loading" title="Iniciado: {fmtTime(st.rec?.started_at)}">
                       <span class="spinner"></span> Desplegando...
                     </span>
-                  {:else if hookStates[project.id] === 'success'}
-                    <span class="status success">✓ Desplegado</span>
-                  {:else if hookStates[project.id] === 'error'}
-                    <span class="status error">✗ Error</span>
+                  {:else if st.kind === 'success'}
+                    <span class="status success" title={st.rec ? `Duración: ${fmtDuration(st.rec.duration_s)} · ${fmtTime(st.rec.ended_at)}` : ''}>
+                      ✓ Desplegado{st.rec?.duration_s != null ? ` (${fmtDuration(st.rec.duration_s)})` : ''}
+                    </span>
+                  {:else if st.kind === 'failed'}
+                    <button
+                      type="button"
+                      class="status error status-clickable"
+                      onclick={() => openDetail(st.rec)}
+                      title="Ver detalle del fallo"
+                    >
+                      ✗ Falló{st.rec?.failed_step ? ` en ${st.rec.failed_step}` : ''}
+                    </button>
+                  {:else if st.kind === 'error'}
+                    <span class="status error">✗ Error de red</span>
                   {:else}
                     <span class="status idle">— Listo</span>
                   {/if}
@@ -198,6 +321,53 @@
       <p>Flujo: <span class="flow">git pull → dependencias → pm2 restart</span></p>
     </footer>
   </div>
+
+  {#if detailDeploy}
+    <div
+      class="modal-backdrop"
+      onclick={closeDetail}
+      onkeydown={(e) => { if (e.key === 'Escape') closeDetail(); }}
+      role="presentation"
+    >
+      <div
+        class="modal"
+        onclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Detalle del deploy"
+        tabindex="-1"
+      >
+        <header class="modal-header">
+          <h3>{detailDeploy.app} · <span class="status-tag {detailDeploy.status}">{detailDeploy.status}</span></h3>
+          <button type="button" class="modal-close" onclick={closeDetail} aria-label="Cerrar">✕</button>
+        </header>
+        <div class="modal-meta">
+          <div><strong>Paso fallido:</strong> {detailDeploy.failed_step || '—'}</div>
+          <div><strong>Duración:</strong> {fmtDuration(detailDeploy.duration_s)}</div>
+          <div><strong>Inicio:</strong> {fmtTime(detailDeploy.started_at)}</div>
+          <div><strong>Fin:</strong> {fmtTime(detailDeploy.ended_at)}</div>
+          <div><strong>Branch:</strong> {detailDeploy.branch || '—'}</div>
+          <div><strong>Stack:</strong> {detailDeploy.stack || '—'}</div>
+        </div>
+        <h4>Error (últimas líneas)</h4>
+        <pre class="error-tail">{detailDeploy.error_tail || '(sin output)'}</pre>
+        <div class="modal-actions">
+          {#if !detailLogContent && !detailLogLoading}
+            <button type="button" class="btn-load-log" onclick={loadFullLog}>
+              Ver log completo
+            </button>
+          {/if}
+        </div>
+        {#if detailLogLoading}
+          <p class="loading-msg"><span class="spinner"></span> Cargando log...</p>
+        {:else if detailLogContent}
+          <h4>Log completo</h4>
+          <pre class="full-log">{detailLogContent}</pre>
+        {/if}
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -300,9 +470,6 @@
 
   tbody tr {
     transition: background 0.15s;
-  }
-
-  tbody tr:last-child {
   }
 
   tbody tr:hover {
@@ -518,6 +685,15 @@
     border: 1px solid #fecaca;
   }
 
+  .status-clickable {
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .status-clickable:hover {
+    background: #fee2e2;
+  }
+
   .spinner {
     width: 13px;
     height: 13px;
@@ -545,5 +721,138 @@
     padding: 2px 8px;
     border-radius: 4px;
     color: #1e40af;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 24px;
+  }
+
+  .modal {
+    background: #fff;
+    border-radius: 10px;
+    max-width: 900px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 20px 24px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 0 0 12px 0;
+    background: transparent;
+  }
+
+  .modal-header h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    color: #1a3a5c;
+    font-family: 'Consolas', 'Courier New', monospace;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .status-tag {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: inherit;
+  }
+
+  .status-tag.success {
+    background: #f0fdf4;
+    color: #15803d;
+    border: 1px solid #bbf7d0;
+  }
+
+  .status-tag.failed {
+    background: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+  }
+
+  .modal-close {
+    background: transparent;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    color: #64748b;
+    line-height: 1;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+
+  .modal-close:hover {
+    background: #f1f5f9;
+  }
+
+  .modal-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 8px 16px;
+    font-size: 0.85rem;
+    color: #475569;
+    margin-bottom: 16px;
+  }
+
+  .modal h4 {
+    margin: 16px 0 8px;
+    font-size: 0.78rem;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+  }
+
+  .error-tail, .full-log {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 12px 16px;
+    border-radius: 6px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .full-log {
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  .modal-actions {
+    margin: 16px 0 8px;
+  }
+
+  .btn-load-log {
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .btn-load-log:hover {
+    background: #1d4ed8;
   }
 </style>
