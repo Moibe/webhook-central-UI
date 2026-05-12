@@ -6,6 +6,19 @@
   const POLL_INTERVAL_MS = 4000;
   const TWO_MINUTES = 2 * 60 * 1000; // 120000ms
 
+  const PROJECT_BY_APP = {
+    'mide-chatbot': 'Mide',
+    'svelte_mide': 'Mide',
+    'notificaciones_twilio': 'Mide',
+    'sandbox_mensajes': 'Mide',
+    'document_ai': 'Art',
+    'conmutador': 'Art',
+    'webhook-central-ui': 'DevOps',
+    'constructor-agente-rag': 'Buzzword Agentes',
+    'buzzword-agentes-ui': 'Buzzword Agentes',
+    'host-asistentes': 'Buzzword Agentes',
+  };
+
   let projects = $state([]);
   let loading = $state(true);
   let error = $state(null);
@@ -19,6 +32,48 @@
   let detailDeploy = $state(null);
   let detailLogContent = $state('');
   let detailLogLoading = $state(false);
+
+  let sortKey = $state(null);
+  let sortDir = $state('asc');
+
+  function setSort(key) {
+    if (sortKey === key) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortKey = key;
+      sortDir = 'asc';
+    }
+  }
+
+  function sortValue(project, key) {
+    switch (key) {
+      case 'name': return (project.name ?? '').toLowerCase();
+      case 'project': return (PROJECT_BY_APP[project.id] ?? '').toLowerCase();
+      case 'stack': return project.stack ?? '';
+      case 'branch': return project.branch ?? '';
+      case 'type': return project.stack === 'python' ? 'api' : 'webapp';
+      case 'port': {
+        const p = appPort(project);
+        return p ? parseInt(p, 10) : -1;
+      }
+      case 'webhook': return project.deploy_url ?? '';
+      case 'status': return effectiveStatus(project.id).kind;
+      default: return '';
+    }
+  }
+
+  const sortedProjects = $derived.by(() => {
+    if (!sortKey) return projects;
+    const arr = [...projects];
+    arr.sort((a, b) => {
+      const av = sortValue(a, sortKey);
+      const bv = sortValue(b, sortKey);
+      if (av < bv) return sortDir === 'asc' ? -1 : 1;
+      if (av > bv) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return arr;
+  });
 
   async function loadProjects() {
     try {
@@ -199,21 +254,45 @@
         <table>
           <thead>
             <tr>
-              <th>Proyecto</th>
-              <th>Stack</th>
-              <th>Branch</th>
+              <th class="sortable" onclick={() => setSort('name')}>
+                Aplicación<span class="sort-arrow {sortKey === 'name' ? 'active' : ''}">{sortKey === 'name' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+              </th>
+              <th class="sortable" onclick={() => setSort('project')}>
+                Proyecto<span class="sort-arrow {sortKey === 'project' ? 'active' : ''}">{sortKey === 'project' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+              </th>
+              <th class="sortable" onclick={() => setSort('stack')}>
+                Stack<span class="sort-arrow {sortKey === 'stack' ? 'active' : ''}">{sortKey === 'stack' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+              </th>
+              <th class="sortable" onclick={() => setSort('branch')}>
+                Branch<span class="sort-arrow {sortKey === 'branch' ? 'active' : ''}">{sortKey === 'branch' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+              </th>
               <th></th>
-              <th>Tipo de App</th>
-              <th>Puerto</th>
-              <th>URL Webhook</th>
-              <th>Estado</th>
+              <th class="sortable" onclick={() => setSort('type')}>
+                Tipo de App<span class="sort-arrow {sortKey === 'type' ? 'active' : ''}">{sortKey === 'type' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+              </th>
+              <th class="sortable" onclick={() => setSort('port')}>
+                Puerto<span class="sort-arrow {sortKey === 'port' ? 'active' : ''}">{sortKey === 'port' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+              </th>
+              <th class="sortable" onclick={() => setSort('webhook')}>
+                URL Webhook<span class="sort-arrow {sortKey === 'webhook' ? 'active' : ''}">{sortKey === 'webhook' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+              </th>
+              <th class="sortable" onclick={() => setSort('status')}>
+                Estado<span class="sort-arrow {sortKey === 'status' ? 'active' : ''}">{sortKey === 'status' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+              </th>
             </tr>
           </thead>
           <tbody>
-            {#each projects as project}
+            {#each sortedProjects as project}
               {@const st = effectiveStatus(project.id)}
               <tr>
                 <td class="project-name">{project.name}</td>
+                <td class="project-group">
+                  {#if PROJECT_BY_APP[project.id]}
+                    {PROJECT_BY_APP[project.id]}
+                  {:else}
+                    <span class="muted">—</span>
+                  {/if}
+                </td>
                 <td>
                   <span class="badge {project.stack === 'svelte' ? 'badge-svelte' : 'badge-python'}">
                     {project.stack}
@@ -294,6 +373,10 @@
                   {:else if st.kind === 'success'}
                     <span class="status success" title={st.rec ? `Duración: ${fmtDuration(st.rec.duration_s)} · ${fmtTime(st.rec.ended_at)}` : ''}>
                       ✓ Desplegado{st.rec?.duration_s != null ? ` (${fmtDuration(st.rec.duration_s)})` : ''}
+                    </span>
+                  {:else if st.kind === 'no_changes'}
+                    <span class="status no-changes" title={st.rec ? `Verificado: ${fmtTime(st.rec.ended_at)}` : ''}>
+                      = Sin cambios
                     </span>
                   {:else if st.kind === 'failed'}
                     <button
@@ -468,6 +551,26 @@
     border: none;
   }
 
+  th.sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+  }
+
+  th.sortable:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .sort-arrow {
+    margin-left: 6px;
+    font-size: 0.7rem;
+    opacity: 0.45;
+  }
+
+  .sort-arrow.active {
+    opacity: 1;
+  }
+
   tbody tr {
     transition: background 0.15s;
   }
@@ -491,6 +594,12 @@
     color: #1e3a5f;
     font-size: 0.88rem;
     text-align: left;
+  }
+
+  .project-group {
+    font-weight: 500;
+    color: #475569;
+    font-size: 0.88rem;
   }
 
   .badge {
@@ -677,6 +786,12 @@
     color: #15803d;
     background: #f0fdf4;
     border: 1px solid #bbf7d0;
+  }
+
+  .status.no-changes {
+    color: #64748b;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
   }
 
   .status.error {
