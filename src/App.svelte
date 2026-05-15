@@ -4,6 +4,7 @@
   const DEPLOYS_URL = 'http://172.10.30.15:4174/logs/deploys.jsonl';
   const LOGS_BASE = 'http://172.10.30.15:4174/logs';
   const POLL_INTERVAL_MS = 4000;
+  const FINISHED_TTL_MS = 10 * 60 * 1000;
 
   const PROJECT_BY_APP = {
     'mide-chatbot': 'Mide',
@@ -31,7 +32,7 @@
   let detailLogContent = $state('');
   let detailLogLoading = $state(false);
 
-  let sortKey = $state(null);
+  let sortKey = $state('project');
   let sortDir = $state('asc');
 
   function setSort(key) {
@@ -46,7 +47,7 @@
   function sortValue(project, key) {
     switch (key) {
       case 'name': return (project.name ?? '').toLowerCase();
-      case 'project': return (PROJECT_BY_APP[project.id] ?? '').toLowerCase();
+      case 'project': return (PROJECT_BY_APP[project.id] ?? '￿').toLowerCase();
       case 'stack': return project.stack ?? '';
       case 'branch': return project.branch ?? '';
       case 'type': return project.stack === 'python' ? 'api' : 'webapp';
@@ -68,6 +69,11 @@
       const bv = sortValue(b, sortKey);
       if (av < bv) return sortDir === 'asc' ? -1 : 1;
       if (av > bv) return sortDir === 'asc' ? 1 : -1;
+      // Tiebreaker: ordenar por nombre de app dentro del mismo grupo
+      const an = (a.name ?? '').toLowerCase();
+      const bn = (b.name ?? '').toLowerCase();
+      if (an < bn) return -1;
+      if (an > bn) return 1;
       return 0;
     });
     return arr;
@@ -159,6 +165,10 @@
 
     if (rec.event === 'started') return { kind: 'running', rec };
     if (rec.event === 'finished') {
+      const endedMs = rec.ended_at ? new Date(rec.ended_at).getTime() : null;
+      if (endedMs && Date.now() - endedMs > FINISHED_TTL_MS) {
+        return { kind: 'idle', rec: null };
+      }
       return { kind: rec.status, rec }; // 'success' | 'failed' | 'no_changes'
     }
     return { kind: 'idle', rec };
@@ -371,7 +381,7 @@
                     </span>
                   {:else if st.kind === 'success'}
                     <span class="status success" title={st.rec ? `Tomó ${fmtDurationVerbose(st.rec.duration_s)} · ${fmtTime(st.rec.ended_at)}` : ''}>
-                      ✓ Desplegado{st.rec?.duration_s != null ? ` · ${fmtDuration(st.rec.duration_s)}` : ''}
+                      ✓ Desplegado
                     </span>
                   {:else if st.kind === 'no_changes'}
                     <span class="status no-changes" title={st.rec ? `Verificado: ${fmtTime(st.rec.ended_at)}` : ''}>
