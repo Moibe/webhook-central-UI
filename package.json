@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "postbuild": "ln -sf /home/mbriseno/webhook-central/apps.json dist/apps.json",
+    "postbuild": "ln -sf /home/mbriseno/webhook-central/apps.json dist/apps.json && ln -sf /home/mbriseno/webhook-central/logs dist/logs",
     "preview": "vite preview"
   },
   "devDependencies": {
