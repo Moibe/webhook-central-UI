@@ -4,7 +4,6 @@
   const DEPLOYS_URL = 'http://172.10.30.15:4174/logs/deploys.jsonl';
   const LOGS_BASE = 'http://172.10.30.15:4174/logs';
   const POLL_INTERVAL_MS = 4000;
-  const TWO_MINUTES = 2 * 60 * 1000; // 120000ms
 
   const PROJECT_BY_APP = {
     'mide-chatbot': 'Mide',
@@ -23,8 +22,7 @@
   let loading = $state(true);
   let error = $state(null);
   let hookStates = $state({}); // estado local transitorio entre el click y la próxima lectura del backend
-  let lastDeployTime = $state({}); // timestamp del último deploy exitoso (UX original)
-  let clickTimes = $state({}); // timestamp del último click, para distinguir un deploy nuevo vs uno histórico
+  let preClickIds = $state({}); // rec.id que estaba en backendDeploys al hacer click; cualquier id distinto = deploy nuevo
 
   let backendDeploys = $state({}); // app -> último registro leído de deploys.jsonl
   let pollOk = $state(false); // false hasta el primer poll exitoso
@@ -145,11 +143,11 @@
   function effectiveStatus(projectId) {
     const local = hookStates[projectId];
     const rec = backendDeploys[projectId];
-    const click = clickTimes[projectId] || 0;
+    const preId = preClickIds[projectId];
 
-    // Mientras el click no se vea reflejado todavía en el backend, mostrar 'loading' local
+    // Mostrar 'loading' local hasta que el backend reporte un rec.id distinto al que había antes del click.
     if (local === 'loading') {
-      if (!rec || new Date(rec.started_at).getTime() < click - 1000) {
+      if (!rec || rec.id === preId) {
         return { kind: 'loading', rec: null };
       }
     }
@@ -161,7 +159,7 @@
 
     if (rec.event === 'started') return { kind: 'running', rec };
     if (rec.event === 'finished') {
-      return { kind: rec.status, rec }; // 'success' | 'failed'
+      return { kind: rec.status, rec }; // 'success' | 'failed' | 'no_changes'
     }
     return { kind: 'idle', rec };
   }
@@ -172,6 +170,16 @@
     const m = Math.floor(s / 60);
     const ss = s % 60;
     return `${m}m ${ss}s`;
+  }
+
+  function fmtDurationVerbose(s) {
+    if (s == null) return '';
+    if (s < 60) return `${s} segundo${s === 1 ? '' : 's'}`;
+    const m = Math.floor(s / 60);
+    const ss = s % 60;
+    const mPart = `${m} minuto${m === 1 ? '' : 's'}`;
+    const sPart = ss === 0 ? '' : ` ${ss} segundo${ss === 1 ? '' : 's'}`;
+    return mPart + sPart;
   }
 
   function fmtTime(iso) {
@@ -189,19 +197,10 @@
     const cur = effectiveStatus(project.id).kind;
     if (cur === 'loading' || cur === 'running') return;
 
-    // Cooldown de 2min sobre el último deploy local exitoso (UX original)
-    if (cur === 'success') {
-      const timePassed = Date.now() - (lastDeployTime[project.id] || 0);
-      if (timePassed < TWO_MINUTES) {
-        // permitido igualmente (el backend muestra el estado real)
-      }
-    }
-
-    clickTimes[project.id] = Date.now();
+    preClickIds[project.id] = backendDeploys[project.id]?.id ?? null;
     hookStates[project.id] = 'loading';
     try {
       await fetch(webhookUrl(project), { mode: 'no-cors' });
-      lastDeployTime[project.id] = Date.now();
     } catch (_) {
       hookStates[project.id] = 'error';
     }
@@ -371,8 +370,8 @@
                       <span class="spinner"></span> Desplegando...
                     </span>
                   {:else if st.kind === 'success'}
-                    <span class="status success" title={st.rec ? `Duración: ${fmtDuration(st.rec.duration_s)} · ${fmtTime(st.rec.ended_at)}` : ''}>
-                      ✓ Desplegado{st.rec?.duration_s != null ? ` (${fmtDuration(st.rec.duration_s)})` : ''}
+                    <span class="status success" title={st.rec ? `Tomó ${fmtDurationVerbose(st.rec.duration_s)} · ${fmtTime(st.rec.ended_at)}` : ''}>
+                      ✓ Desplegado{st.rec?.duration_s != null ? ` · ${fmtDuration(st.rec.duration_s)}` : ''}
                     </span>
                   {:else if st.kind === 'no_changes'}
                     <span class="status no-changes" title={st.rec ? `Verificado: ${fmtTime(st.rec.ended_at)}` : ''}>
